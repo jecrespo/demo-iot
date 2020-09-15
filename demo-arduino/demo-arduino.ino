@@ -13,35 +13,37 @@
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
-#include <WEMOS_DHT12.h>
+#include <SimpleDHT.h>
 #include "secrets.h"
 
 char ssid[] = SECRET_SSID;   // your network SSID (name)
 char pass[] = SECRET_PASS;   // your network password
 
-const char* mqtt_server = "broker.mqtt-dashboard.com";
+const char* mqtt_server = "node02.myqtthub.com";
 
-DHT12 dht12;
+int pinDHT11 = D4;
+SimpleDHT11 dht11(pinDHT11);
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 long lastMsg = 0;
-long lastMsgM = 0;
 char msg[50];
 int value = 0;
-int valueM = 0;
+boolean estado_anterior;
 
-const char* publish_temp = "nodo1/temp";
-const char* publish_reset = "nodo1/reset";
-const char* subs_led = "nodo1/led";
+const char* publish_temp = "demo/temperatura/2";
+const char* publish_reset = "demo/reset/2";
+const char* publish_alert = "demo/alerta/2";
+const char* subs_led = "demo/led/2";
 
 void setup() {
-  pinMode(BUILTIN_LED, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
+  pinMode(D1, OUTPUT);     // Initialize the RELAY pin as an output
+  pinMode(D2, INPUT);     // Initialize the RELAY pin as an output
+  estado_anterior = digitalRead(D2);
   Serial.begin(115200);
   setup_wifi();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
-
 }
 
 void loop() {
@@ -50,22 +52,39 @@ void loop() {
   }
   client.loop();
 
+  boolean estado = digitalRead(D2);
+  if (estado_anterior != estado) {
+    estado_anterior = estado;
+    if (estado == HIGH) {
+      Serial.println("Pulsado");
+      client.publish(publish_alert, "alerta conectado");
+    }
+    else {
+      Serial.println("libre");
+      client.publish(publish_alert, "alerta desconectado");
+    }
+  }
+
   long now = millis();
   if (now - lastMsg > 10000) {
-    if (dht12.get() == 0) {
-      Serial.print("Temperature in Celsius : ");
-      Serial.println(dht12.cTemp);
-      Serial.print("Temperature in Fahrenheit : ");
-      Serial.println(dht12.fTemp);
-      Serial.print("Relative Humidity : ");
-      Serial.println(dht12.humidity);
-      Serial.println();
-      Serial.print("Publish message: ");
-      Serial.println(msg);
-      float value = dht12.cTemp;
-      snprintf (msg, 50, "#%f", value);
-      client.publish(publish_temp, msg);
+    lastMsg = now;
+    Serial.println("Sample DHT11...");
+    // read without samples.
+    byte temperature = 0;
+    byte humidity = 0;
+    int err = SimpleDHTErrSuccess;
+    if ((err = dht11.read(&temperature, &humidity, NULL)) != SimpleDHTErrSuccess) {
+      Serial.print("Read DHT11 failed, err="); Serial.println(err); delay(1000);
+      return;
     }
+    Serial.print("Sample OK: ");
+    Serial.print((float)temperature); Serial.print(" *C, ");
+    Serial.println();
+    float value = (float)temperature;
+    snprintf (msg, 50, "%2.1f", value);
+    client.publish(publish_temp, msg);
+    Serial.print("Publish message: ");
+    Serial.println(msg);
   }
 }
 
@@ -81,24 +100,21 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == String(subs_led)) {
     // Switch on the LED if an 1 was received as first character
     if ((char)payload[0] == '1') {
-      digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-      // but actually the LED is on; this is because
-      // it is active low on the ESP-01)
+      digitalWrite(D1, HIGH);   // Turn the LED on
     } else {
-      digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+      digitalWrite(D1, LOW);  // Turn the LED off
     }
   }
 }
 
 void setup_wifi() {
-
   delay(10);
   // We start by connecting to a WiFi network
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid, pass);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -115,25 +131,24 @@ void setup_wifi() {
 
 void reconnect() {
   // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str()),SECRET_MQTT_USER,SECRET_MQTT_PASS) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      client.publish(publish_reset, "reset");
-      // ... and resubscribe
-      client.subscribe(subs_led);
-      client.subscribe(subs_text);
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
+
+  Serial.print("Attempting MQTT connection...");
+  // Create a random client ID
+  String clientId = "esp8266-demo-01";
+  //clientId += String(random(0xffff), HEX);
+  // Attempt to connect
+  if (client.connect(clientId.c_str(), SECRET_MQTT_USER, SECRET_MQTT_PASS)) {
+    Serial.println("connected");
+    // Once connected, publish an announcement...
+    client.publish(publish_reset, "reset");
+    Serial.println("publicado reset");
+    // ... and resubscribe
+    client.subscribe(subs_led);
+  } else {
+    Serial.print("failed, rc=");
+    Serial.print(client.state());
+    Serial.println(" try again in 5 seconds");
+    // Wait 5 seconds before retrying
+    delay(5000);
   }
 }
