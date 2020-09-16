@@ -66,7 +66,7 @@ void loop() {
   }
 
   long now = millis();
-  if (now - lastMsg > 10000) {
+  if (now - lastMsg > 60000) {
     lastMsg = now;
     Serial.println("Sample DHT11...");
     // read without samples.
